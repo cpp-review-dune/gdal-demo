@@ -129,3 +129,5 @@ dmypy.json
 .pyre/
 *.png
 *.tif
+!nlcd2001_clipped.tif
+!nlcd2016_clipped.tif

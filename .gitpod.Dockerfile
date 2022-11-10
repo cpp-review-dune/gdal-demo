@@ -21,6 +21,7 @@ ARG PACKAGES="\
   netcdf \
   arrow \
   postgresql-libs \
+  mariadb-libs \
   python-gdal \
   git \
   python-black \
