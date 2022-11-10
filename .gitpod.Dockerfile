@@ -10,8 +10,21 @@ RUN echo -e '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist' | tee -a /etc/pac
 USER gitpod
 
 ARG PACKAGES="\
+  openexr \
+  cfitsio \
+  hdf5 \
+  libheif \
+  openjpeg2 \
+  poppler \
+  podofo \
+  libwebp \
+  netcdf \
+  arrow \
+  postgresql-libs \
   python-gdal \
   git \
+  python-black \
+  python-matplotlib \
   "
 
 RUN sudo pacman-key --init && \

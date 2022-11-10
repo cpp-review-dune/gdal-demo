@@ -1,155 +1,48 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-# This code is in the public domain, so as to serve as a template for
-# real-world plugins.
-# or, at the choice of the licensee,
-# Copyright 2019 Even Rouault
-# SPDX-License-Identifier: MIT
+# Tutorial
+# https://here.isnew.info/how-to-save-a-numpy-array-as-a-geotiff-file-using-gdal.html
 
-# gdal: DRIVER_NAME = "PASSTHROUGH"
-# API version(s) supported. Must include 1 currently
-# gdal: DRIVER_SUPPORTED_API_VERSION = [1]
-# gdal: DRIVER_DCAP_VECTOR = "YES"
-# gdal: DRIVER_DMD_LONGNAME = "Passthrough driver"
-# gdal: DRIVER_DMD_CONNECTION_PREFIX = "PASSTHROUGH:"
-
-from osgeo import gdal, ogr
-
-from gdal_python_driver import BaseDriver, BaseDataset, BaseLayer
+from osgeo import gdal
+import numpy as np
+import matplotlib.pyplot as plt
 
 
-class Layer(BaseLayer):
-    def __init__(self, gdal_layer):
-        self.gdal_layer = gdal_layer
-        self.name = gdal_layer.GetName()
-        self.fid_name = gdal_layer.GetFIDColumn()
-        self.metadata = gdal_layer.GetMetadata_Dict()
-        self.iterator_honour_attribute_filter = True
-        self.iterator_honour_spatial_filter = True
-        self.feature_count_honour_attribute_filter = True
-        self.feature_count_honour_spatial_filter = True
-
-    def fields(self):
-        res = []
-        layer_defn = self.gdal_layer.GetLayerDefn()
-        for i in range(layer_defn.GetFieldCount()):
-            ogr_field_def = layer_defn.GetFieldDefn(i)
-            field_def = {
-                "name": ogr_field_def.GetName(),
-                "type": ogr_field_def.GetType(),
-            }
-            res.append(field_def)
-        return res
-
-    def geometry_fields(self):
-        res = []
-        layer_defn = self.gdal_layer.GetLayerDefn()
-        for i in range(layer_defn.GetGeomFieldCount()):
-            ogr_field_def = layer_defn.GetGeomFieldDefn(i)
-            field_def = {
-                "name": ogr_field_def.GetName(),
-                "type": ogr_field_def.GetType(),
-            }
-            srs = ogr_field_def.GetSpatialRef()
-            if srs:
-                field_def["srs"] = srs.ExportToWkt()
-            res.append(field_def)
-        return res
-
-    def test_capability(self, cap):
-        if cap in (
-            BaseLayer.FastGetExtent,
-            BaseLayer.StringsAsUTF8,
-            BaseLayer.RandomRead,
-            BaseLayer.FastFeatureCount,
-        ):
-            return self.gdal_layer.TestCapability(cap)
-        return False
-
-    def extent(self, force_computation):
-        # Impedance mismatch between SWIG GetExtent() and the Python
-        # driver API
-        minx, maxx, miny, maxy = self.gdal_layer.GetExtent(force_computation)
-        return [minx, miny, maxx, maxy]
-
-    def feature_count(self, force_computation):
-        # Dummy implementation: we call back the generic C++ implementation
-        return self.gdal_layer.GetFeatureCount(True)
-
-    def attribute_filter_changed(self):
-        # Dummy implementation: we call back the generic C++ implementation
-        if self.attribute_filter:
-            self.gdal_layer.SetAttributeFilter(str(self.attribute_filter))
-        else:
-            self.gdal_layer.SetAttributeFilter(None)
-
-    def spatial_filter_changed(self):
-        # Dummy implementation: we call back the generic C++ implementation
-        # the 'inf' test is just for a test_ogrsf oddity
-        if self.spatial_filter and "inf" not in self.spatial_filter:
-            self.gdal_layer.SetSpatialFilter(
-                ogr.CreateGeometryFromWkt(self.spatial_filter)
-            )
-        else:
-            self.gdal_layer.SetSpatialFilter(None)
-
-    def _translate_feature(self, ogr_f):
-        fields = {}
-        layer_defn = ogr_f.GetDefnRef()
-        for i in range(ogr_f.GetFieldCount()):
-            if ogr_f.IsFieldSet(i):
-                fields[layer_defn.GetFieldDefn(i).GetName()] = ogr_f.GetField(i)
-        geom_fields = {}
-        for i in range(ogr_f.GetGeomFieldCount()):
-            g = ogr_f.GetGeomFieldRef(i)
-            if g:
-                geom_fields[
-                    layer_defn.GetGeomFieldDefn(i).GetName()
-                ] = g.ExportToIsoWkt()
-        return {
-            "id": ogr_f.GetFID(),
-            "type": "OGRFeature",
-            "style": ogr_f.GetStyleString(),
-            "fields": fields,
-            "geometry_fields": geom_fields,
-        }
-
-    def __iter__(self):
-        for f in self.gdal_layer:
-            yield self._translate_feature(f)
-
-    def feature_by_id(self, fid):
-        ogr_f = self.gdal_layer.GetFeature(fid)
-        if not ogr_f:
-            return None
-        return self._translate_feature(ogr_f)
+def read_geotiff(filename):
+    ds = gdal.Open(filename)
+    band = ds.GetRasterBand(1)
+    arr = band.ReadAsArray()
+    return arr, ds
 
 
-class Dataset(BaseDataset):
-    def __init__(self, gdal_ds):
-        self.gdal_ds = gdal_ds
-        self.layers = [
-            Layer(gdal_ds.GetLayer(idx)) for idx in range(gdal_ds.GetLayerCount())
-        ]
-        self.metadata = gdal_ds.GetMetadata_Dict()
+def write_geotiff(filename, arr, in_ds):
+    if arr.dtype == np.float32:
+        arr_type = gdal.GDT_Float32
+    else:
+        arr_type = gdal.GDT_Int32
 
-    def close(self):
-        del self.gdal_ds
-        self.gdal_ds = None
+    driver = gdal.GetDriverByName("GTiff")
+    out_ds = driver.Create(filename, arr.shape[1], arr.shape[0], 1, arr_type)
+    out_ds.SetProjection(in_ds.GetProjection())
+    out_ds.SetGeoTransform(in_ds.GetGeoTransform())
+    band = out_ds.GetRasterBand(1)
+    band.WriteArray(arr)
+    band.FlushCache()
+    band.ComputeStatistics(False)
 
 
-class Driver(BaseDriver):
-    def _identify(self, filename):
-        prefix = "PASSTHROUGH:"
-        if not filename.startswith(prefix):
-            return None
-        return gdal.OpenEx(filename[len(prefix) :], gdal.OF_VECTOR)
+nlcd01_arr, nlcd01_ds = read_geotiff("nlcd2001_clipped.tif")
+nlcd16_arr, nlcd16_ds = read_geotiff("nlcd2016_clipped.tif")
 
-    def identify(self, filename, first_bytes, open_flags, open_options={}):
-        return self._identify(filename) is not None
+nlcd_changed = np.where(nlcd01_arr != nlcd16_arr, 1, 0)
 
-    def open(self, filename, first_bytes, open_flags, open_options={}):
-        gdal_ds = self._identify(filename)
-        if not gdal_ds:
-            return None
-        return Dataset(gdal_ds)
+write_geotiff("nlcd_changed.tif", nlcd_changed, nlcd01_ds)
+
+plt.subplot(311)
+plt.imshow(nlcd01_arr)
+
+plt.subplot(312)
+plt.imshow(nlcd16_arr)
+
+plt.subplot(313)
+plt.imshow(nlcd_changed)
+
+plt.savefig("image.png")
